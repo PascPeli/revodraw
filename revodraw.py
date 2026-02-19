@@ -371,8 +371,11 @@ HTML_TEMPLATE = '''
                     <button class="btn" onclick="resetPosition()">↺ Reset</button>
                     <button class="btn" onclick="undoErase()">⟲ Undo</button>
                     <button class="btn" onclick="detectArea()">📱 Detect Area</button>
+                    <input type="file" id="screenshotInput" accept="image/*" style="display:none"
+                        onchange="detectAreaFromFile(this.files[0])">
+                    <button class="btn" onclick="document.getElementById('screenshotInput').click()">📂 Load Screenshot</button>
                 </div>
-                <div id="areaStatus" class="status info">Click "Detect Area" to capture phone screen</div>
+                <div id="areaStatus" class="status info">Click "Detect Area" to capture phone screen, or load a screenshot manually</div>
             </div>
         </div>
 
@@ -974,26 +977,50 @@ HTML_TEMPLATE = '''
             try {
                 const resp = await fetch('/detect');
                 const data = await resp.json();
-
-                if (data.error) {
-                    document.getElementById('areaStatus').textContent = 'Error: ' + data.error;
-                    document.getElementById('areaStatus').className = 'status error';
-                    log('Detection error: ' + data.error);
-                    return;
-                }
-
-                drawingArea = data.area;
-                document.getElementById('areaStatus').textContent =
-                    `Area detected: ${data.area.right - data.area.left}x${data.area.bottom - data.area.top}px`;
-                document.getElementById('areaStatus').className = 'status success';
-                log('Drawing area detected successfully');
-                updatePreview();
-                updateDrawButton();
+                handleDetectResult(data);
             } catch (err) {
                 document.getElementById('areaStatus').textContent = 'Error: ' + err.message;
                 document.getElementById('areaStatus').className = 'status error';
                 log('Error: ' + err.message);
             }
+        }
+
+        async function detectAreaFromFile(file) {
+            if (!file) return;
+            log('Detecting drawing area from uploaded screenshot...');
+            document.getElementById('areaStatus').textContent = 'Analyzing screenshot...';
+            document.getElementById('areaStatus').className = 'status warning';
+
+            try {
+                const formData = new FormData();
+                formData.append('screenshot', file, file.name);
+                const resp = await fetch('/detect-from-file', { method: 'POST', body: formData });
+                const data = await resp.json();
+                handleDetectResult(data);
+            } catch (err) {
+                document.getElementById('areaStatus').textContent = 'Error: ' + err.message;
+                document.getElementById('areaStatus').className = 'status error';
+                log('Error: ' + err.message);
+            }
+            // Reset input so the same file can be re-selected
+            document.getElementById('screenshotInput').value = '';
+        }
+
+        function handleDetectResult(data) {
+            if (data.error) {
+                document.getElementById('areaStatus').textContent = 'Error: ' + data.error;
+                document.getElementById('areaStatus').className = 'status error';
+                log('Detection error: ' + data.error);
+                return;
+            }
+
+            drawingArea = data.area;
+            document.getElementById('areaStatus').textContent =
+                `Area detected: ${data.area.right - data.area.left}x${data.area.bottom - data.area.top}px`;
+            document.getElementById('areaStatus').className = 'status success';
+            log('Drawing area detected successfully');
+            updatePreview();
+            updateDrawButton();
         }
 
         function updatePreview() {
@@ -1395,6 +1422,35 @@ def detect_area():
     """Detect drawing area from phone screenshot."""
     try:
         area = detect_from_screenshot(debug=False)
+        STATE['drawing_area'] = area
+
+        return jsonify({
+            'area': {
+                'top': area.top,
+                'left': area.left,
+                'right': area.right,
+                'bottom': area.bottom,
+                'cutout_left': area.cutout_left,
+                'cutout_top': area.cutout_top,
+                'top_excl_right': area.top_excl_right,
+                'top_excl_bottom': area.top_excl_bottom
+            }
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
+@app.route('/detect-from-file', methods=['POST'])
+def detect_area_from_file():
+    """Detect drawing area from an uploaded screenshot."""
+    try:
+        if 'screenshot' not in request.files:
+            return jsonify({'error': 'No screenshot uploaded'})
+        file = request.files['screenshot']
+        screenshot_path = 'screen.png'
+        file.save(screenshot_path)
+
+        area = detect_from_screenshot(screenshot_path=screenshot_path, debug=False)
         STATE['drawing_area'] = area
 
         return jsonify({

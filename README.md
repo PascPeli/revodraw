@@ -11,6 +11,7 @@ Draw custom images on your Revolut card using your phone's drawing screen. RevoD
 ## Features
 
 - **Automatic boundary detection** - Detects the dotted-line drawing area from your phone screen
+- **Manual screenshot loading** - Load a screenshot manually if ADB capture doesn't work
 - **Multiple image layers** - Add multiple images and position them independently
 - **Edge detection** - Multiple algorithms (auto, edges, contours, adaptive) to extract drawable paths
 - **Real-time preview** - See exactly what will be drawn before executing
@@ -59,7 +60,7 @@ Then open http://localhost:5000 in your browser.
 1. Connect your Android phone via USB
 2. Open Revolut app → Cards → Design card → Freeform drawing
 3. **Select the pen tool and set it to the smallest size** for optimal results
-4. Click "Detect Area" in RevoDraw to capture the drawing boundaries
+4. Click "Detect Area" to capture the drawing boundaries (or "Load Screenshot" to use a manual screenshot)
 5. Upload an image and adjust edge detection settings
 6. Position and transform your image using the preview
 7. Click "Start Drawing" to draw on your phone
@@ -87,7 +88,7 @@ python image_draw.py drawing.png --preview  # Preview without drawing
 
 ## How It Works
 
-1. **Screenshot capture** - Takes a screenshot via ADB
+1. **Screenshot capture** - Takes a screenshot via ADB (or loads a manually provided screenshot)
 2. **Boundary detection** - Uses OpenCV to find the dotted-line drawing area
 3. **Edge extraction** - Converts your image to drawable paths using edge detection
 4. **Path scaling** - Fits paths within the detected boundaries
@@ -177,6 +178,10 @@ The image will be converted to paths using edge detection, so clean lines are es
 - For Xiaomi: Enable "USB debugging (Security settings)" and reboot
 - Make sure you're on the freeform drawing screen
 - Try running `adb shell input tap 500 500` to test
+
+**"Could not load image: screen.png"**
+- The ADB screenshot may have produced corrupted data; RevoDraw will automatically retry with a fallback method
+- If it still fails, use "Load Screenshot" to manually load a screenshot taken on your phone (transfer it to your computer first)
 
 **Boundary detection fails**
 - Ensure the card drawing screen is fully visible
