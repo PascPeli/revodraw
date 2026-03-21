@@ -21,6 +21,7 @@ import math
 from pathlib import Path
 from dataclasses import asdict
 
+import argparse
 import cv2
 import numpy as np
 from flask import Flask, render_template_string, request, jsonify, send_file
@@ -1602,12 +1603,32 @@ def stop():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='RevoDraw - Card Drawing Web UI')
+    parser.add_argument('-p', '--port', type=int, default=5000, help='Port to run the server on (default: 5000)')
+    parser.add_argument('-s', '--serial', help='ADB device serial number (optional)')
+    args = parser.parse_args()
+    port = args.port
+
+    if args.serial:
+        os.environ['ANDROID_SERIAL'] = args.serial
+        print(f"📡 Using specified device: {args.serial}")
+    else:
+        # Auto-pick physical device if multiple are present to avoid "more than one device" error
+        try:
+            res = subprocess.run(['adb', '-d', 'get-serialno'], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and 'unknown' not in res.stdout.lower() and 'error' not in res.stdout.lower():
+                serial = res.stdout.strip()
+                os.environ['ANDROID_SERIAL'] = serial
+                print(f"📡 Auto-targeted physical device: {serial}")
+        except:
+            pass
+
     print("\n" + "="*50)
     print("🎨 RevoDraw - Card Drawing Web UI")
     print("="*50)
     print("\n📱 Connect your Android phone via USB")
     print("   Enable USB Debugging (Security Settings) on Xiaomi")
-    print("\n🌐 Open in browser: http://localhost:5000")
+    print(f"\n🌐 Open in browser: http://localhost:{port}")
     print("\n" + "="*50 + "\n")
 
-    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+    app.run(host='127.0.0.1', port=port, debug=False, threaded=True)
