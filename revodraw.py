@@ -1411,10 +1411,8 @@ HTML_TEMPLATE = '''
                 while (true) {
                     const {value, done} = await reader.read();
                     if (done) break;
-
                     const text = decoder.decode(value);
                     const lines = text.split('\\n').filter(l => l.startsWith('data:'));
-
                     for (const line of lines) {
                         const data = JSON.parse(line.slice(5));
                         if (data.progress !== undefined) {
@@ -1814,6 +1812,11 @@ def resume():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='RevoDraw - Card Drawing Web UI')
+    parser.add_argument('-p', '--port', type=int, default=5000, help='Port to run the server on (default: 5000)')
+    args = parser.parse_args()
+    port = args.port
+
     print("\n" + "="*50)
     print("🎨 RevoDraw - Card Drawing Web UI")
     print("="*50)
