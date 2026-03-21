@@ -21,6 +21,7 @@ import math
 from pathlib import Path
 from dataclasses import asdict
 
+import argparse
 import cv2
 import numpy as np
 from flask import Flask, render_template_string, request, jsonify, send_file
@@ -295,6 +296,12 @@ HTML_TEMPLATE = '''
                         <label>Simplify:</label>
                         <input type="range" id="simplify" min="0" max="10" step="0.5" value="2">
                         <span id="simplifyVal">2</span>
+                    </div>
+                    <div class="control-group" style="display:flex; align-items:center; gap:10px;">
+                        <label>Fill:</label>
+                        <input type="checkbox" id="fillShape">
+                        <label title="Space between fill lines">Spacing:</label>
+                        <input type="number" id="fillSpacing" min="1" max="20" value="4" style="width:50px;">
                     </div>
                 </div>
                 <button class="btn" onclick="processImage()">🔄 Process Image</button>
@@ -699,6 +706,8 @@ HTML_TEMPLATE = '''
             formData.append('method', document.getElementById('method').value);
             formData.append('threshold', document.getElementById('threshold').value);
             formData.append('simplify', document.getElementById('simplify').value);
+            formData.append('fill', document.getElementById('fillShape').checked ? '1' : '0');
+            formData.append('spacing', document.getElementById('fillSpacing').value);
 
             try {
                 const resp = await fetch('/process', { method: 'POST', body: formData });
@@ -927,6 +936,8 @@ HTML_TEMPLATE = '''
             formData.append('method', document.getElementById('method').value);
             formData.append('threshold', document.getElementById('threshold').value);
             formData.append('simplify', document.getElementById('simplify').value);
+            formData.append('fill', document.getElementById('fillShape').checked ? '1' : '0');
+            formData.append('spacing', document.getElementById('fillSpacing').value);
 
             try {
                 const resp = await fetch('/process', { method: 'POST', body: formData });
@@ -1331,6 +1342,8 @@ def process_image():
         method = request.form.get('method', 'auto')
         threshold = int(request.form.get('threshold', 127))
         simplify = float(request.form.get('simplify', 2.0))
+        fill = request.form.get('fill', '0') == '1'
+        spacing = int(request.form.get('spacing', 4))
 
         # Get uploaded file
         if 'image' not in request.files:
@@ -1353,7 +1366,7 @@ def process_image():
 
         # Extract paths based on method
         h, w = img.shape
-        paths = extract_paths(img, method, threshold, simplify)
+        paths = extract_paths(img, method, threshold, simplify, fill, spacing)
 
         # Calculate stats
         path_count = len(paths)
@@ -1375,17 +1388,19 @@ def process_image():
         return jsonify({'error': str(e)})
 
 
-def extract_paths(img, method, threshold, simplify):
+def extract_paths(img, method, threshold, simplify, fill=False, spacing=4):
     """Extract drawable paths from image."""
     if method == 'auto':
         std_dev = np.std(img)
         method = 'contours' if std_dev > 70 else 'edges'
 
+    binary = None
     if method == 'edges':
         blurred = cv2.GaussianBlur(img, (5, 5), 0)
         high_thresh, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         edges = cv2.Canny(blurred, high_thresh * 0.5, high_thresh)
         contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        binary = edges
     elif method == 'contours':
         _, binary = cv2.threshold(img, threshold, 255, cv2.THRESH_BINARY_INV)
         contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -1398,12 +1413,41 @@ def extract_paths(img, method, threshold, simplify):
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     else:
         contours = []
+        binary = np.zeros_like(img)
 
     paths = []
+    
+    if fill and binary is not None:
+        h, w = binary.shape
+        fill_paths = []
+        for y in range(0, h, spacing):
+            row = binary[y, :]
+            # Find continuous segments of white pixels (255)
+            diff = np.diff(np.concatenate(([0], row, [0])))
+            starts = np.where(diff > 0)[0]
+            ends = np.where(diff < 0)[0]
+            
+            segments = []
+            for s, e in zip(starts, ends):
+                if e - s > 1: # Ignore 1-pixel artifacts
+                    segments.append((s, e))
+            
+            # Zig-zag to minimize pen travel time
+            if len(segments) > 0:
+                if y % (spacing * 2) != 0:
+                    segments.reverse()
+                    for s, e in segments:
+                        fill_paths.append([(int(e-1), int(y)), (int(s), int(y))])
+                else:
+                    for s, e in segments:
+                        fill_paths.append([(int(s), int(y)), (int(e-1), int(y))])
+
+        paths.extend(fill_paths)
+
     for contour in contours:
         if len(contour) < 3:
             continue
-        if cv2.contourArea(contour) < 20:
+        if cv2.contourArea(contour) < 20 and not fill:
             continue
 
         if simplify > 0:
@@ -1602,12 +1646,32 @@ def stop():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='RevoDraw - Card Drawing Web UI')
+    parser.add_argument('-p', '--port', type=int, default=5000, help='Port to run the server on (default: 5000)')
+    parser.add_argument('-s', '--serial', help='ADB device serial number (optional)')
+    args = parser.parse_args()
+    port = args.port
+
+    if args.serial:
+        os.environ['ANDROID_SERIAL'] = args.serial
+        print(f"📡 Using specified device: {args.serial}")
+    else:
+        # Auto-pick physical device if multiple are present to avoid "more than one device" error
+        try:
+            res = subprocess.run(['adb', '-d', 'get-serialno'], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and 'unknown' not in res.stdout.lower() and 'error' not in res.stdout.lower():
+                serial = res.stdout.strip()
+                os.environ['ANDROID_SERIAL'] = serial
+                print(f"📡 Auto-targeted physical device: {serial}")
+        except:
+            pass
+
     print("\n" + "="*50)
     print("🎨 RevoDraw - Card Drawing Web UI")
     print("="*50)
     print("\n📱 Connect your Android phone via USB")
     print("   Enable USB Debugging (Security Settings) on Xiaomi")
-    print("\n🌐 Open in browser: http://localhost:5000")
+    print(f"\n🌐 Open in browser: http://localhost:{port}")
     print("\n" + "="*50 + "\n")
 
-    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+    app.run(host='127.0.0.1', port=port, debug=False, threaded=True)
