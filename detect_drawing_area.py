@@ -351,8 +351,23 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Detect Revolut card drawing area")
     parser.add_argument("--screenshot", "-s", help="Path to screenshot")
+    parser.add_argument("--serial", "-S", help="ADB device serial number")
     parser.add_argument("--debug", "-d", action="store_true", help="Save debug images")
     args = parser.parse_args()
+
+    if args.serial:
+        import os
+        os.environ['ANDROID_SERIAL'] = args.serial
+    elif not os.environ.get('ANDROID_SERIAL'):
+        # Auto-pick physical device
+        try:
+            import os
+            import subprocess
+            res = subprocess.run(['adb', '-d', 'get-serialno'], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and 'unknown' not in res.stdout.lower() and 'error' not in res.stdout.lower():
+                os.environ['ANDROID_SERIAL'] = res.stdout.strip()
+        except:
+            pass
 
     try:
         area = detect_from_screenshot(args.screenshot, debug=args.debug)
