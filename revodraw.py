@@ -37,7 +37,10 @@ STATE = {
     'image_paths': None,
     'offset_x': 0,
     'offset_y': 0,
-    'scale': 1.0
+    'scale': 1.0,
+    'drawing': False,
+    'paused': False,
+    'resume_event': __import__('threading').Event()
 }
 
 
@@ -382,14 +385,17 @@ HTML_TEMPLATE = '''
 
         <div class="panel" style="margin-top: 20px;">
             <h2>4. Draw on Phone</h2>
-            <div class="controls">
-                <button class="btn btn-primary" id="drawBtn" onclick="startDrawing()" disabled>
+            <div class="controls" style="flex-wrap:wrap; gap:8px;">
+                <button class="btn btn-primary" id="drawBtn" onclick="startDrawingAll()" disabled>
                     ✏️ Start Drawing
                 </button>
                 <button class="btn btn-danger" id="stopBtn" onclick="stopDrawing()" disabled>
                     ⏹ Stop
                 </button>
-                <div class="control-group" style="margin-left:20px;">
+                <button class="btn" id="pauseBtn" onclick="togglePause()" disabled style="background:#e67e22;">
+                    ⏸ Pause
+                </button>
+                <div class="control-group" style="margin-left:10px;">
                     <label>Stroke:</label>
                     <input type="range" id="strokeDuration" min="20" max="150" value="60">
                     <span id="strokeVal">60ms</span>
@@ -400,7 +406,26 @@ HTML_TEMPLATE = '''
                     <span id="delayVal">15ms</span>
                 </div>
             </div>
-            <div class="progress-bar">
+
+            <!-- Parts controls, shown when total points > 500 -->
+            <div id="partsPanel" style="display:none; margin-top:12px; padding:10px; background:rgba(255,255,255,0.05); border-radius:8px;">
+                <div class="controls" style="flex-wrap:wrap; gap:8px; align-items:center;">
+                    <div class="control-group">
+                        <label>Parts:</label>
+                        <input type="range" id="numParts" min="1" max="10" value="1" oninput="onNumPartsChange()">
+                        <span id="numPartsVal">1</span>
+                    </div>
+                    <div class="control-group" style="align-items:center; gap:6px;">
+                        <label>
+                            <input type="checkbox" id="tryMode">
+                            Try Mode <small style="color:#aaa;">(rough sketch first)</small>
+                        </label>
+                    </div>
+                </div>
+                <div id="partButtons" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
+            </div>
+
+            <div class="progress-bar" style="margin-top:10px;">
                 <div class="progress-bar-fill" id="progressBar"></div>
             </div>
             <div id="drawStatus" class="status info">Upload an image and detect area to begin</div>
@@ -722,6 +747,7 @@ HTML_TEMPLATE = '''
                 drawEdgePreview(data.paths, data.width, data.height);
                 updateLayerList();
                 updatePreview();
+                updatePartsPanel();
 
                 log(`Reprocessed: ${data.path_count} paths, ${data.point_count} points`);
             } catch (err) {
@@ -965,6 +991,7 @@ HTML_TEMPLATE = '''
 
                 updatePreview();
                 updateDrawButton();
+                updatePartsPanel();
             } catch (err) {
                 log('Error: ' + err.message);
             }
@@ -1210,33 +1237,23 @@ HTML_TEMPLATE = '''
             btn.disabled = !(hasVisibleLayers && drawingArea);
         }
 
-        async function startDrawing() {
-            if (!processedPaths || !drawingArea) return;
-
-            isDrawing = true;
-            document.getElementById('drawBtn').disabled = true;
-            document.getElementById('stopBtn').disabled = false;
-            document.getElementById('drawStatus').textContent = 'Drawing in progress...';
-            document.getElementById('drawStatus').className = 'status warning';
-
-            log('Starting drawing...');
-
-            try {
-                // Save current layer state
-                saveCurrentLayerState();
-
-                // Convert canvas offset to phone coordinates for all layers
-                const area = drawingArea;
-                const previewScale = Math.min(
-                    canvas.width / (area.right - area.left + 100),
-                    canvas.height / (area.bottom - area.top + 100)
-                ) * 0.9;
-
-                // Prepare all visible layers for drawing
-                const layersToSend = layers
-                    .filter(l => l.visible && l.paths && l.paths.length > 0)
-                    .map(l => ({
-                        paths: l.paths,
+        // Collect all paths from visible layers (optionally subsample for Try Mode)
+        function collectLayerPaths(subsample = false) {
+            const area = drawingArea;
+            const previewScale = Math.min(
+                canvas.width / (area.right - area.left + 100),
+                canvas.height / (area.bottom - area.top + 100)
+            ) * 0.9;
+            return layers
+                .filter(l => l.visible && l.paths && l.paths.length > 0)
+                .map(l => {
+                    let paths = l.paths;
+                    if (subsample) {
+                        // Take every 3rd path to give a rough sketch
+                        paths = paths.filter((_, i) => i % 3 === 0);
+                    }
+                    return {
+                        paths,
                         offset_x: l.offset.x / previewScale,
                         offset_y: l.offset.y / previewScale,
                         scale_x: l.scaleX,
@@ -1244,11 +1261,129 @@ HTML_TEMPLATE = '''
                         rotation: l.rotation,
                         flip_h: l.flipH,
                         flip_v: l.flipV
-                    }));
+                    };
+                });
+        }
 
-                const strokeDuration = parseInt(document.getElementById('strokeDuration').value);
-                const strokeDelay = parseInt(document.getElementById('strokeDelay').value);
+        // Slice layers' paths for a specific part (0-indexed)
+        function sliceLayersForPart(partIndex, numParts) {
+            const area = drawingArea;
+            const previewScale = Math.min(
+                canvas.width / (area.right - area.left + 100),
+                canvas.height / (area.bottom - area.top + 100)
+            ) * 0.9;
+            return layers
+                .filter(l => l.visible && l.paths && l.paths.length > 0)
+                .map(l => {
+                    const total = l.paths.length;
+                    const partSize = Math.ceil(total / numParts);
+                    const start = partIndex * partSize;
+                    const end = Math.min(start + partSize, total);
+                    return {
+                        paths: l.paths.slice(start, end),
+                        offset_x: l.offset.x / previewScale,
+                        offset_y: l.offset.y / previewScale,
+                        scale_x: l.scaleX,
+                        scale_y: l.scaleY,
+                        rotation: l.rotation,
+                        flip_h: l.flipH,
+                        flip_v: l.flipV
+                    };
+                });
+        }
 
+        // Show/hide parts panel based on point count
+        function updatePartsPanel() {
+            const totalPoints = layers.reduce((s, l) => s + (l.paths||[]).reduce((a,p) => a + p.length, 0), 0);
+            document.getElementById('partsPanel').style.display = totalPoints > 500 ? 'block' : 'none';
+            onNumPartsChange();
+        }
+
+        function onNumPartsChange() {
+            const n = parseInt(document.getElementById('numParts').value);
+            document.getElementById('numPartsVal').textContent = n;
+            const container = document.getElementById('partButtons');
+            if (n <= 1) { container.innerHTML = ''; return; }
+            container.innerHTML = Array.from({length: n}, (_, i) =>
+                `<button class="btn" onclick="startDrawingPart(${i}, ${n})" style="padding:4px 10px;">Part ${i+1}</button>`
+            ).join('');
+        }
+
+        let isPaused = false;
+
+        async function togglePause() {
+            const btn = document.getElementById('pauseBtn');
+            if (!isPaused) {
+                await fetch('/pause', {method: 'POST'});
+                isPaused = true;
+                btn.textContent = '▶ Resume';
+                btn.style.background = '#27ae60';
+                document.getElementById('drawStatus').textContent = 'Drawing paused. Click Resume to continue.';
+                document.getElementById('drawStatus').className = 'status warning';
+                log('Drawing paused');
+            } else {
+                await fetch('/resume', {method: 'POST'});
+                isPaused = false;
+                btn.textContent = '⏸ Pause';
+                btn.style.background = '#e67e22';
+                document.getElementById('drawStatus').textContent = 'Drawing resumed...';
+                document.getElementById('drawStatus').className = 'status warning';
+                log('Drawing resumed');
+            }
+        }
+
+        async function startDrawingAll() {
+            const tryMode = document.getElementById('tryMode').checked;
+            const numParts = parseInt(document.getElementById('numParts').value);
+            saveCurrentLayerState();
+
+            if (tryMode) {
+                log('Try Mode: drawing rough sketch first...');
+                const sketchLayers = collectLayerPaths(true);
+                await runDraw(sketchLayers, 'Try sketch done. Now starting full drawing...');
+                if (!isDrawing) return; // stopped by user
+            }
+
+            if (numParts <= 1) {
+                await runDraw(collectLayerPaths(false), 'Complete!');
+            } else {
+                for (let i = 0; i < numParts; i++) {
+                    if (!isDrawing) return;
+                    // Part 1 also does a sketch if not already done via tryMode
+                    if (i === 0 && !tryMode) {
+                        log(`Part 1/${numParts}: drawing sketch first...`);
+                        const sketchPart = sliceLayersForPart(0, numParts).map(l =>
+                            ({...l, paths: l.paths.filter((_, j) => j % 3 === 0)}));
+                        await runDraw(sketchPart, `Part 1 sketch done. Completing Part 1...`);
+                        if (!isDrawing) return;
+                    }
+                    log(`Drawing Part ${i+1}/${numParts}...`);
+                    await runDraw(sliceLayersForPart(i, numParts), `Part ${i+1}/${numParts} complete.`);
+                }
+            }
+        }
+
+        async function startDrawingPart(partIndex, numParts) {
+            saveCurrentLayerState();
+            log(`Drawing Part ${partIndex+1}/${numParts}...`);
+            await runDraw(sliceLayersForPart(partIndex, numParts), `Part ${partIndex+1}/${numParts} complete.`);
+        }
+
+        async function runDraw(layersToSend, doneMsg) {
+            isDrawing = true;
+            document.getElementById('drawBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('pauseBtn').disabled = false;
+            isPaused = false;
+            document.getElementById('pauseBtn').textContent = '⏸ Pause';
+            document.getElementById('pauseBtn').style.background = '#e67e22';
+            document.getElementById('drawStatus').textContent = 'Drawing in progress...';
+            document.getElementById('drawStatus').className = 'status warning';
+
+            const strokeDuration = parseInt(document.getElementById('strokeDuration').value);
+            const strokeDelay = parseInt(document.getElementById('strokeDelay').value);
+
+            try {
                 const resp = await fetch('/draw', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1275,11 +1410,9 @@ HTML_TEMPLATE = '''
                         if (data.progress !== undefined) {
                             document.getElementById('progressBar').style.width = data.progress + '%';
                         }
-                        if (data.message) {
-                            log(data.message);
-                        }
+                        if (data.message) log(data.message);
                         if (data.done) {
-                            document.getElementById('drawStatus').textContent = 'Drawing complete!';
+                            document.getElementById('drawStatus').textContent = doneMsg;
                             document.getElementById('drawStatus').className = 'status success';
                         }
                         if (data.error) {
@@ -1297,10 +1430,19 @@ HTML_TEMPLATE = '''
             isDrawing = false;
             document.getElementById('drawBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
+            document.getElementById('pauseBtn').disabled = true;
         }
+
+        // Legacy alias for any remaining calls
+        function startDrawing() { startDrawingAll(); }
 
         async function stopDrawing() {
             await fetch('/stop', {method: 'POST'});
+            isDrawing = false;
+            isPaused = false;
+            document.getElementById('pauseBtn').textContent = '⏸ Pause';
+            document.getElementById('pauseBtn').style.background = '#e67e22';
+            document.getElementById('pauseBtn').disabled = true;
             log('Drawing stopped by user');
             document.getElementById('drawStatus').textContent = 'Drawing stopped';
             document.getElementById('drawStatus').className = 'status warning';
@@ -1573,6 +1715,13 @@ def draw():
                     yield f"data:{json.dumps({'message': 'Stopped', 'done': True})}\n\n"
                     return
 
+                # Pause support: block until resumed
+                if STATE.get('paused', False):
+                    yield f"data:{json.dumps({'message': 'Paused...'})}\n\n"
+                    STATE['resume_event'].wait()
+                    STATE['resume_event'].clear()
+                    yield f"data:{json.dumps({'message': 'Resumed.'})}\n\n"
+
                 for j in range(len(path) - 1):
                     x1, y1 = path[j]
                     x2, y2 = path[j + 1]
@@ -1592,6 +1741,7 @@ def draw():
             yield f"data:{json.dumps({'error': str(e)})}\n\n"
 
     STATE['drawing'] = True
+    STATE['paused'] = False
     return app.response_class(generate(), mimetype='text/event-stream')
 
 
@@ -1599,7 +1749,25 @@ def draw():
 def stop():
     """Stop drawing."""
     STATE['drawing'] = False
+    STATE['paused'] = False
+    STATE['resume_event'].set()  # Unblock if paused
     return jsonify({'status': 'stopped'})
+
+
+@app.route('/pause', methods=['POST'])
+def pause():
+    """Pause drawing after current stroke."""
+    STATE['paused'] = True
+    STATE['resume_event'].clear()
+    return jsonify({'status': 'paused'})
+
+
+@app.route('/resume', methods=['POST'])
+def resume():
+    """Resume a paused drawing."""
+    STATE['paused'] = False
+    STATE['resume_event'].set()
+    return jsonify({'status': 'resumed'})
 
 
 if __name__ == '__main__':
