@@ -37,10 +37,7 @@ STATE = {
     'image_paths': None,
     'offset_x': 0,
     'offset_y': 0,
-    'scale': 1.0,
-    'drawing': False,
-    'paused': False,
-    'resume_event': __import__('threading').Event()
+    'scale': 1.0
 }
 
 
@@ -300,12 +297,6 @@ HTML_TEMPLATE = '''
                         <input type="range" id="simplify" min="0" max="10" step="0.5" value="2">
                         <span id="simplifyVal">2</span>
                     </div>
-                    <div class="control-group" style="display:flex; align-items:center; gap:10px;">
-                        <label>Fill:</label>
-                        <input type="checkbox" id="fillShape">
-                        <label title="Space between fill lines">Spacing:</label>
-                        <input type="number" id="fillSpacing" min="1" max="20" value="4" style="width:50px;">
-                    </div>
                 </div>
                 <button class="btn" onclick="processImage()">🔄 Process Image</button>
                 <button class="btn" id="reprocessBtn" onclick="reprocessLayer()" style="display:none;">🔄 Reprocess Selected</button>
@@ -391,17 +382,14 @@ HTML_TEMPLATE = '''
 
         <div class="panel" style="margin-top: 20px;">
             <h2>4. Draw on Phone</h2>
-            <div class="controls" style="flex-wrap:wrap; gap:8px;">
-                <button class="btn btn-primary" id="drawBtn" onclick="startDrawingAll()" disabled>
+            <div class="controls">
+                <button class="btn btn-primary" id="drawBtn" onclick="startDrawing()" disabled>
                     ✏️ Start Drawing
                 </button>
                 <button class="btn btn-danger" id="stopBtn" onclick="stopDrawing()" disabled>
                     ⏹ Stop
                 </button>
-                <button class="btn" id="pauseBtn" onclick="togglePause()" disabled style="background:#e67e22;">
-                    ⏸ Pause
-                </button>
-                <div class="control-group" style="margin-left:10px;">
+                <div class="control-group" style="margin-left:20px;">
                     <label>Stroke:</label>
                     <input type="range" id="strokeDuration" min="20" max="150" value="60">
                     <span id="strokeVal">60ms</span>
@@ -412,26 +400,7 @@ HTML_TEMPLATE = '''
                     <span id="delayVal">15ms</span>
                 </div>
             </div>
-
-            <!-- Parts controls, shown when total points > 500 -->
-            <div id="partsPanel" style="display:none; margin-top:12px; padding:10px; background:rgba(255,255,255,0.05); border-radius:8px;">
-                <div class="controls" style="flex-wrap:wrap; gap:8px; align-items:center;">
-                    <div class="control-group">
-                        <label>Parts:</label>
-                        <input type="range" id="numParts" min="1" max="10" value="1" oninput="onNumPartsChange()">
-                        <span id="numPartsVal">1</span>
-                    </div>
-                    <div class="control-group" style="align-items:center; gap:6px;">
-                        <label>
-                            <input type="checkbox" id="tryMode">
-                            Try Mode <small style="color:#aaa;">(rough sketch first)</small>
-                        </label>
-                    </div>
-                </div>
-                <div id="partButtons" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
-            </div>
-
-            <div class="progress-bar" style="margin-top:10px;">
+            <div class="progress-bar">
                 <div class="progress-bar-fill" id="progressBar"></div>
             </div>
             <div id="drawStatus" class="status info">Upload an image and detect area to begin</div>
@@ -731,8 +700,6 @@ HTML_TEMPLATE = '''
             formData.append('method', document.getElementById('method').value);
             formData.append('threshold', document.getElementById('threshold').value);
             formData.append('simplify', document.getElementById('simplify').value);
-            formData.append('fill', document.getElementById('fillShape').checked ? '1' : '0');
-            formData.append('spacing', document.getElementById('fillSpacing').value);
 
             try {
                 const resp = await fetch('/process', { method: 'POST', body: formData });
@@ -755,7 +722,6 @@ HTML_TEMPLATE = '''
                 drawEdgePreview(data.paths, data.width, data.height);
                 updateLayerList();
                 updatePreview();
-                updatePartsPanel();
 
                 log(`Reprocessed: ${data.path_count} paths, ${data.point_count} points`);
             } catch (err) {
@@ -962,8 +928,6 @@ HTML_TEMPLATE = '''
             formData.append('method', document.getElementById('method').value);
             formData.append('threshold', document.getElementById('threshold').value);
             formData.append('simplify', document.getElementById('simplify').value);
-            formData.append('fill', document.getElementById('fillShape').checked ? '1' : '0');
-            formData.append('spacing', document.getElementById('fillSpacing').value);
 
             try {
                 const resp = await fetch('/process', { method: 'POST', body: formData });
@@ -1001,7 +965,6 @@ HTML_TEMPLATE = '''
 
                 updatePreview();
                 updateDrawButton();
-                updatePartsPanel();
             } catch (err) {
                 log('Error: ' + err.message);
             }
@@ -1247,153 +1210,45 @@ HTML_TEMPLATE = '''
             btn.disabled = !(hasVisibleLayers && drawingArea);
         }
 
-        // Collect all paths from visible layers (optionally subsample for Try Mode)
-        function collectLayerPaths(subsample = false) {
-            const area = drawingArea;
-            const previewScale = Math.min(
-                canvas.width / (area.right - area.left + 100),
-                canvas.height / (area.bottom - area.top + 100)
-            ) * 0.9;
-            return layers
-                .filter(l => l.visible && l.paths && l.paths.length > 0)
-                .map(l => {
-                    let paths = l.paths;
-                    if (subsample) {
-                        // Take every 3rd path to give a rough sketch
-                        paths = paths.filter((_, i) => i % 3 === 0);
-                    }
-                    return {
-                        paths,
-                        offset_x: l.offset.x / previewScale,
-                        offset_y: l.offset.y / previewScale,
-                        scale_x: l.scaleX,
-                        scale_y: l.scaleY,
-                        rotation: l.rotation,
-                        flip_h: l.flipH,
-                        flip_v: l.flipV
-                    };
-                });
-        }
+        async function startDrawing() {
+            if (!processedPaths || !drawingArea) return;
 
-        // Slice layers' paths for a specific part (0-indexed)
-        function sliceLayersForPart(partIndex, numParts) {
-            const area = drawingArea;
-            const previewScale = Math.min(
-                canvas.width / (area.right - area.left + 100),
-                canvas.height / (area.bottom - area.top + 100)
-            ) * 0.9;
-            return layers
-                .filter(l => l.visible && l.paths && l.paths.length > 0)
-                .map(l => {
-                    const total = l.paths.length;
-                    const partSize = Math.ceil(total / numParts);
-                    const start = partIndex * partSize;
-                    const end = Math.min(start + partSize, total);
-                    return {
-                        paths: l.paths.slice(start, end),
-                        offset_x: l.offset.x / previewScale,
-                        offset_y: l.offset.y / previewScale,
-                        scale_x: l.scaleX,
-                        scale_y: l.scaleY,
-                        rotation: l.rotation,
-                        flip_h: l.flipH,
-                        flip_v: l.flipV
-                    };
-                });
-        }
-
-        // Show/hide parts panel based on point count
-        function updatePartsPanel() {
-            const totalPoints = layers.reduce((s, l) => s + (l.paths||[]).reduce((a,p) => a + p.length, 0), 0);
-            document.getElementById('partsPanel').style.display = totalPoints > 500 ? 'block' : 'none';
-            onNumPartsChange();
-        }
-
-        function onNumPartsChange() {
-            const n = parseInt(document.getElementById('numParts').value);
-            document.getElementById('numPartsVal').textContent = n;
-            const container = document.getElementById('partButtons');
-            if (n <= 1) { container.innerHTML = ''; return; }
-            container.innerHTML = Array.from({length: n}, (_, i) =>
-                `<button class="btn" onclick="startDrawingPart(${i}, ${n})" style="padding:4px 10px;">Part ${i+1}</button>`
-            ).join('');
-        }
-
-        let isPaused = false;
-
-        async function togglePause() {
-            const btn = document.getElementById('pauseBtn');
-            if (!isPaused) {
-                await fetch('/pause', {method: 'POST'});
-                isPaused = true;
-                btn.textContent = '▶ Resume';
-                btn.style.background = '#27ae60';
-                document.getElementById('drawStatus').textContent = 'Drawing paused. Click Resume to continue.';
-                document.getElementById('drawStatus').className = 'status warning';
-                log('Drawing paused');
-            } else {
-                await fetch('/resume', {method: 'POST'});
-                isPaused = false;
-                btn.textContent = '⏸ Pause';
-                btn.style.background = '#e67e22';
-                document.getElementById('drawStatus').textContent = 'Drawing resumed...';
-                document.getElementById('drawStatus').className = 'status warning';
-                log('Drawing resumed');
-            }
-        }
-
-        async function startDrawingAll() {
-            const tryMode = document.getElementById('tryMode').checked;
-            const numParts = parseInt(document.getElementById('numParts').value);
-            saveCurrentLayerState();
-
-            if (tryMode) {
-                log('Try Mode: drawing rough sketch first...');
-                const sketchLayers = collectLayerPaths(true);
-                await runDraw(sketchLayers, 'Try sketch done. Now starting full drawing...');
-                if (!isDrawing) return; // stopped by user
-            }
-
-            if (numParts <= 1) {
-                await runDraw(collectLayerPaths(false), 'Complete!');
-            } else {
-                for (let i = 0; i < numParts; i++) {
-                    if (!isDrawing) return;
-                    // Part 1 also does a sketch if not already done via tryMode
-                    if (i === 0 && !tryMode) {
-                        log(`Part 1/${numParts}: drawing sketch first...`);
-                        const sketchPart = sliceLayersForPart(0, numParts).map(l =>
-                            ({...l, paths: l.paths.filter((_, j) => j % 3 === 0)}));
-                        await runDraw(sketchPart, `Part 1 sketch done. Completing Part 1...`);
-                        if (!isDrawing) return;
-                    }
-                    log(`Drawing Part ${i+1}/${numParts}...`);
-                    await runDraw(sliceLayersForPart(i, numParts), `Part ${i+1}/${numParts} complete.`);
-                }
-            }
-        }
-
-        async function startDrawingPart(partIndex, numParts) {
-            saveCurrentLayerState();
-            log(`Drawing Part ${partIndex+1}/${numParts}...`);
-            await runDraw(sliceLayersForPart(partIndex, numParts), `Part ${partIndex+1}/${numParts} complete.`);
-        }
-
-        async function runDraw(layersToSend, doneMsg) {
             isDrawing = true;
             document.getElementById('drawBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
-            document.getElementById('pauseBtn').disabled = false;
-            isPaused = false;
-            document.getElementById('pauseBtn').textContent = '⏸ Pause';
-            document.getElementById('pauseBtn').style.background = '#e67e22';
             document.getElementById('drawStatus').textContent = 'Drawing in progress...';
             document.getElementById('drawStatus').className = 'status warning';
 
-            const strokeDuration = parseInt(document.getElementById('strokeDuration').value);
-            const strokeDelay = parseInt(document.getElementById('strokeDelay').value);
+            log('Starting drawing...');
 
             try {
+                // Save current layer state
+                saveCurrentLayerState();
+
+                // Convert canvas offset to phone coordinates for all layers
+                const area = drawingArea;
+                const previewScale = Math.min(
+                    canvas.width / (area.right - area.left + 100),
+                    canvas.height / (area.bottom - area.top + 100)
+                ) * 0.9;
+
+                // Prepare all visible layers for drawing
+                const layersToSend = layers
+                    .filter(l => l.visible && l.paths && l.paths.length > 0)
+                    .map(l => ({
+                        paths: l.paths,
+                        offset_x: l.offset.x / previewScale,
+                        offset_y: l.offset.y / previewScale,
+                        scale_x: l.scaleX,
+                        scale_y: l.scaleY,
+                        rotation: l.rotation,
+                        flip_h: l.flipH,
+                        flip_v: l.flipV
+                    }));
+
+                const strokeDuration = parseInt(document.getElementById('strokeDuration').value);
+                const strokeDelay = parseInt(document.getElementById('strokeDelay').value);
+
                 const resp = await fetch('/draw', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1411,16 +1266,20 @@ HTML_TEMPLATE = '''
                 while (true) {
                     const {value, done} = await reader.read();
                     if (done) break;
+
                     const text = decoder.decode(value);
                     const lines = text.split('\\n').filter(l => l.startsWith('data:'));
+
                     for (const line of lines) {
                         const data = JSON.parse(line.slice(5));
                         if (data.progress !== undefined) {
                             document.getElementById('progressBar').style.width = data.progress + '%';
                         }
-                        if (data.message) log(data.message);
+                        if (data.message) {
+                            log(data.message);
+                        }
                         if (data.done) {
-                            document.getElementById('drawStatus').textContent = doneMsg;
+                            document.getElementById('drawStatus').textContent = 'Drawing complete!';
                             document.getElementById('drawStatus').className = 'status success';
                         }
                         if (data.error) {
@@ -1438,19 +1297,10 @@ HTML_TEMPLATE = '''
             isDrawing = false;
             document.getElementById('drawBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
-            document.getElementById('pauseBtn').disabled = true;
         }
-
-        // Legacy alias for any remaining calls
-        function startDrawing() { startDrawingAll(); }
 
         async function stopDrawing() {
             await fetch('/stop', {method: 'POST'});
-            isDrawing = false;
-            isPaused = false;
-            document.getElementById('pauseBtn').textContent = '⏸ Pause';
-            document.getElementById('pauseBtn').style.background = '#e67e22';
-            document.getElementById('pauseBtn').disabled = true;
             log('Drawing stopped by user');
             document.getElementById('drawStatus').textContent = 'Drawing stopped';
             document.getElementById('drawStatus').className = 'status warning';
@@ -1482,8 +1332,6 @@ def process_image():
         method = request.form.get('method', 'auto')
         threshold = int(request.form.get('threshold', 127))
         simplify = float(request.form.get('simplify', 2.0))
-        fill = request.form.get('fill', '0') == '1'
-        spacing = int(request.form.get('spacing', 4))
 
         # Get uploaded file
         if 'image' not in request.files:
@@ -1506,7 +1354,7 @@ def process_image():
 
         # Extract paths based on method
         h, w = img.shape
-        paths = extract_paths(img, method, threshold, simplify, fill, spacing)
+        paths = extract_paths(img, method, threshold, simplify)
 
         # Calculate stats
         path_count = len(paths)
@@ -1528,19 +1376,17 @@ def process_image():
         return jsonify({'error': str(e)})
 
 
-def extract_paths(img, method, threshold, simplify, fill=False, spacing=4):
+def extract_paths(img, method, threshold, simplify):
     """Extract drawable paths from image."""
     if method == 'auto':
         std_dev = np.std(img)
         method = 'contours' if std_dev > 70 else 'edges'
 
-    binary = None
     if method == 'edges':
         blurred = cv2.GaussianBlur(img, (5, 5), 0)
         high_thresh, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         edges = cv2.Canny(blurred, high_thresh * 0.5, high_thresh)
         contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        binary = edges
     elif method == 'contours':
         _, binary = cv2.threshold(img, threshold, 255, cv2.THRESH_BINARY_INV)
         contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -1553,41 +1399,12 @@ def extract_paths(img, method, threshold, simplify, fill=False, spacing=4):
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     else:
         contours = []
-        binary = np.zeros_like(img)
 
     paths = []
-    
-    if fill and binary is not None:
-        h, w = binary.shape
-        fill_paths = []
-        for y in range(0, h, spacing):
-            row = binary[y, :]
-            # Find continuous segments of white pixels (255)
-            diff = np.diff(np.concatenate(([0], row, [0])))
-            starts = np.where(diff > 0)[0]
-            ends = np.where(diff < 0)[0]
-            
-            segments = []
-            for s, e in zip(starts, ends):
-                if e - s > 1: # Ignore 1-pixel artifacts
-                    segments.append((s, e))
-            
-            # Zig-zag to minimize pen travel time
-            if len(segments) > 0:
-                if y % (spacing * 2) != 0:
-                    segments.reverse()
-                    for s, e in segments:
-                        fill_paths.append([(int(e-1), int(y)), (int(s), int(y))])
-                else:
-                    for s, e in segments:
-                        fill_paths.append([(int(s), int(y)), (int(e-1), int(y))])
-
-        paths.extend(fill_paths)
-
     for contour in contours:
         if len(contour) < 3:
             continue
-        if cv2.contourArea(contour) < 20 and not fill:
+        if cv2.contourArea(contour) < 20:
             continue
 
         if simplify > 0:
@@ -1756,13 +1573,6 @@ def draw():
                     yield f"data:{json.dumps({'message': 'Stopped', 'done': True})}\n\n"
                     return
 
-                # Pause support: block until resumed
-                if STATE.get('paused', False):
-                    yield f"data:{json.dumps({'message': 'Paused...'})}\n\n"
-                    STATE['resume_event'].wait()
-                    STATE['resume_event'].clear()
-                    yield f"data:{json.dumps({'message': 'Resumed.'})}\n\n"
-
                 for j in range(len(path) - 1):
                     x1, y1 = path[j]
                     x2, y2 = path[j + 1]
@@ -1782,7 +1592,6 @@ def draw():
             yield f"data:{json.dumps({'error': str(e)})}\n\n"
 
     STATE['drawing'] = True
-    STATE['paused'] = False
     return app.response_class(generate(), mimetype='text/event-stream')
 
 
@@ -1790,47 +1599,14 @@ def draw():
 def stop():
     """Stop drawing."""
     STATE['drawing'] = False
-    STATE['paused'] = False
-    STATE['resume_event'].set()  # Unblock if paused
     return jsonify({'status': 'stopped'})
-
-
-@app.route('/pause', methods=['POST'])
-def pause():
-    """Pause drawing after current stroke."""
-    STATE['paused'] = True
-    STATE['resume_event'].clear()
-    return jsonify({'status': 'paused'})
-
-
-@app.route('/resume', methods=['POST'])
-def resume():
-    """Resume a paused drawing."""
-    STATE['paused'] = False
-    STATE['resume_event'].set()
-    return jsonify({'status': 'resumed'})
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RevoDraw - Card Drawing Web UI')
     parser.add_argument('-p', '--port', type=int, default=5000, help='Port to run the server on (default: 5000)')
-    parser.add_argument('-s', '--serial', help='ADB device serial number (optional)')
     args = parser.parse_args()
     port = args.port
-
-    if args.serial:
-        os.environ['ANDROID_SERIAL'] = args.serial
-        print(f"📡 Using specified device: {args.serial}")
-    else:
-        # Auto-pick physical device if multiple are present to avoid "more than one device" error
-        try:
-            res = subprocess.run(['adb', '-d', 'get-serialno'], capture_output=True, text=True, timeout=2)
-            if res.returncode == 0 and 'unknown' not in res.stdout.lower() and 'error' not in res.stdout.lower():
-                serial = res.stdout.strip()
-                os.environ['ANDROID_SERIAL'] = serial
-                print(f"📡 Auto-targeted physical device: {serial}")
-        except:
-            pass
 
     print("\n" + "="*50)
     print("🎨 RevoDraw - Card Drawing Web UI")
