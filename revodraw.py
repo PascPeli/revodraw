@@ -39,8 +39,7 @@ STATE = {
     'offset_y': 0,
     'scale': 1.0,
     'drawing': False,
-    'paused': False,
-    'resume_event': __import__('threading').Event()
+    'paused': False
 }
 
 
@@ -192,6 +191,157 @@ HTML_TEMPLATE = '''
             background: #00d4ff;
             width: 0%;
             transition: width 0.3s;
+        }
+
+        /* Range Selector Styles */
+        .range-container {
+            position: relative;
+            height: 40px;
+            background: #0a0a1a;
+            border-radius: 8px;
+            margin: 10px 0;
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            user-select: none;
+        }
+        .range-track {
+            position: relative;
+            width: 100%;
+            height: 6px;
+            background: #0f3460;
+            border-radius: 3px;
+        }
+        .range-fill {
+            position: absolute;
+            height: 100%;
+            background: #00d4ff;
+            border-radius: 3px;
+            opacity: 0.3;
+        }
+        .range-handle {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: #00d4ff;
+            border-radius: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+            z-index: 2;
+        }
+        .range-handle::after {
+            content: '';
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: #1a1a2e;
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .range-handle:active {
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+        .range-info span { font-family: monospace; }
+        
+        .range-ticks {
+            position: absolute;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            bottom: -5px;
+            pointer-events: none;
+            padding: 0 10px;
+            box-sizing: border-box;
+        }
+        .range-tick {
+            width: 1px;
+            height: 5px;
+            background: #0f3460;
+            position: relative;
+        }
+        .range-tick::after {
+            content: attr(data-label);
+            position: absolute;
+            top: 6px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 8px;
+            color: #555;
+        }
+        .range-tick.major { height: 8px; background: #34495e; }
+        .range-tick.major::after { color: #888; }
+        
+        /* Points Editor Styles */
+        .points-editor {
+            margin-top: 15px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            padding: 10px;
+            border: 1px solid rgba(255,255,255,0.05);
+            max-height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+        .points-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+        }
+        .pt-btn-del:hover { color: #ff0000; }
+        
+        .points-grid-container {
+            overflow-y: auto;
+            flex-grow: 1;
+            max-height: 400px;
+        }
+        .points-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 2px;
+            padding: 5px;
+        }
+        .pt-item {
+            display: flex;
+            align-items: center;
+            background: rgba(255,255,255,0.03);
+            border-radius: 4px;
+            padding: 1px 4px;
+            font-size: 10px;
+            gap: 2px;
+        }
+        .pt-item span.idx { color: #444; width: 25px; text-align: right; margin-right: 4px; }
+        .pt-item .coord { display: flex; align-items: center; color: #666; }
+        .pt-item input {
+            background: transparent;
+            border: none;
+            color: #00d4ff;
+            width: 35px;
+            font-family: monospace;
+            padding: 1px;
+            text-align: center;
+        }
+        .pt-item input:focus { color: #fff; background: rgba(0,212,255,0.2); border-radius: 2px; }
+        
+        /* Hide number input spinners ONLY for points editor */
+        .pt-item input::-webkit-outer-spin-button,
+        .pt-item input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .pt-item input[type=number] { -moz-appearance: textfield; }
+
+        .editor-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.1);
         }
 
         #log {
@@ -392,7 +542,7 @@ HTML_TEMPLATE = '''
         <div class="panel" style="margin-top: 20px;">
             <h2>4. Draw on Phone</h2>
             <div class="controls" style="flex-wrap:wrap; gap:8px;">
-                <button class="btn btn-primary" id="drawBtn" onclick="startDrawingAll()" disabled>
+                <button class="btn btn-primary" id="drawBtn" onclick="startDrawingRange()" disabled>
                     ✏️ Start Drawing
                 </button>
                 <button class="btn btn-danger" id="stopBtn" onclick="stopDrawing()" disabled>
@@ -411,24 +561,104 @@ HTML_TEMPLATE = '''
                     <input type="range" id="strokeDelay" min="5" max="50" value="15">
                     <span id="delayVal">15ms</span>
                 </div>
+                <div class="control-group" style="margin-left:6px;">
+                    <span id="timeEstLabel" style="font-size:10px; color:#888;">⏱ --</span>
+                </div>
             </div>
 
-            <!-- Parts controls, shown when total points > 500 -->
-            <div id="partsPanel" style="display:none; margin-top:12px; padding:10px; background:rgba(255,255,255,0.05); border-radius:8px;">
-                <div class="controls" style="flex-wrap:wrap; gap:8px; align-items:center;">
-                    <div class="control-group">
-                        <label>Parts:</label>
-                        <input type="range" id="numParts" min="1" max="10" value="1" oninput="onNumPartsChange()">
-                        <span id="numPartsVal">1</span>
+            <!-- Range Selector, shown when total points > 0 -->
+            <div id="partsPanel" style="display:none; margin-top:15px; padding:15px; background:rgba(255,255,255,0.05); border-radius:12px;">
+                <div class="range-info">
+                    <span id="rangeStartLabel">Start: 0%</span>
+                    <span id="rangePointsLabel" style="color:#00d4ff; font-weight:bold;">Selection: 0 pts</span>
+                    <span id="rangeEndLabel">End: 100%</span>
+                </div>
+                <div class="range-container" id="rangeContainer">
+                    <div style="position:relative; width:100%; height:100%; display:flex; align-items:center;">
+                        <div class="range-track">
+                            <div class="range-fill" id="rangeFill" style="left:0%; width:100%;"></div>
+                        </div>
+                        <div class="range-handle" id="handleStart" style="left: 0%;"></div>
+                        <div class="range-handle" id="handleEnd" style="left: 100%;"></div>
+                        <div class="range-ticks" style="padding:0;"> <!-- Removed padding since parent handles it -->
+                            <div class="range-tick major" data-label="0%"></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick major" data-label="25%"></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick major" data-label="50%"></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick major" data-label="75%"></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick" data-label=""></div>
+                        <div class="range-tick major" data-label="100%"></div>
+                        </div>
                     </div>
-                    <div class="control-group" style="align-items:center; gap:6px;">
-                        <label>
+                </div>
+                <div class="controls" style="margin-top:20px; justify-content: space-between; flex-wrap:nowrap;">
+                    <div class="control-group" style="gap:6px;">
+                        <button class="btn btn-primary" id="playSelBtn" onclick="startDrawingRange()" style="padding:6px 12px; font-size:12px;">
+                            ▶ Play Selection
+                        </button>
+                        <button class="btn" id="playNextBtn" onclick="playNext()" style="padding:6px 12px; font-size:12px; opacity:0.8;">
+                            ⏭ Play Next
+                        </button>
+                        <label style="cursor:pointer; display:flex; align-items:center; gap:5px; font-size:11px;" title="Automatically play the next segment when finished">
+                            <input type="checkbox" id="autoPlay">
+                            <span>Auto Play</span>
+                        </label>
+                        <button class="btn" onclick="resetRange()" style="padding:4px 12px; font-size:11px; margin-left:10px;">
+                            🔄 Reset
+                        </button>
+                    </div>
+                    <div class="control-group" style="gap:10px;">
+                        <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
                             <input type="checkbox" id="tryMode">
-                            Try Mode <small style="color:#aaa;">(rough sketch first)</small>
+                            <span title="Draw a rough sketch before the full selection">Try Mode</span>
                         </label>
                     </div>
                 </div>
-                <div id="partButtons" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
+                <!-- Preconfigured Parts -->
+                <!-- Split Parts -->
+                <div style="margin-top:10px; border-top:1px solid rgba(255,255,255,0.05); padding-top:10px;">
+                    <div class="controls" style="gap:10px; align-items:center;">
+                        <label style="font-size:11px; color:#666;">Split Parts:</label>
+                        <input type="number" id="splitPartsCount" value="4" min="1" max="20" style="width:40px; padding:2px 4px; font-size:11px;" onchange="updateSplitParts()">
+                        <div id="splitPartsContainer" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+                    </div>
+                </div>
+
+                <!-- Points Editor (Initially Hidden) -->
+                <div id="pointsEditor" style="display:none;" class="points-editor">
+                    <div class="points-header">
+                        <span>Points Editor</span>
+                        <button class="btn" onclick="togglePointsEditor()" style="padding:2px 8px; font-size:10px;">Close</button>
+                    </div>
+                    <div class="points-grid-container">
+                        <div class="points-grid" id="pointsGrid"></div>
+                    </div>
+                    <div id="editorStats" style="font-size:10px; color:#555; margin-top:5px; text-align:center;"></div>
+                    <div class="editor-actions">
+                        <button class="btn" style="padding:4px 8px; font-size:10px;" onclick="bulkThinSelection()">Thin (Remove 50%)</button>
+                        <button class="btn" style="padding:4px 8px; font-size:10px;" onclick="bulkDeleteSelection()">Delete All Selected</button>
+                        <button class="btn btn-primary" style="padding:4px 8px; font-size:10px; margin-left:auto;" onclick="applyPointEdits()">Save Edits</button>
+                    </div>
+                </div>
+                <div style="text-align:center; margin-top:10px;">
+                    <button id="showEditorBtn" class="btn" style="padding:4px 12px; font-size:11px; background:rgba(255,255,255,0.05);" onclick="togglePointsEditor()">
+                        🔍 View/Edit Selected Points
+                    </button>
+                </div>
             </div>
 
             <div class="progress-bar" style="margin-top:10px;">
@@ -440,6 +670,8 @@ HTML_TEMPLATE = '''
     </div>
 
     <script>
+        const sleep = ms => new Promise(res => setTimeout(res, ms));
+
         let originalImage = null;
         let processedPaths = null;
         let pathsHistory = [];  // For undo
@@ -454,6 +686,12 @@ HTML_TEMPLATE = '''
         let currentTool = 'move';
         let eraserSize = 30;
         let mousePos = {x: 0, y: 0};
+        
+        // Range selection state
+        let rangeStartPct = 0;
+        let rangeEndPct = 100;
+        let activeHandle = null;
+        let pointSelectionMapping = []; // [{lIdx, pIdx, ptIdx}]
 
         // Multi-layer support
         let layers = [];  // {name, paths, offset, scaleX, scaleY, rotation, flipH, flipV, visible}
@@ -549,10 +787,31 @@ HTML_TEMPLATE = '''
         };
         document.getElementById('strokeDuration').oninput = (e) => {
             document.getElementById('strokeVal').textContent = e.target.value + 'ms';
+            updateTimeEstimate();
         };
         document.getElementById('strokeDelay').oninput = (e) => {
             document.getElementById('delayVal').textContent = e.target.value + 'ms';
+            updateTimeEstimate();
         };
+
+        function updateTimeEstimate() {
+            const strokeMs = parseInt(document.getElementById('strokeDuration').value);
+            const delayMs  = parseInt(document.getElementById('strokeDelay').value);
+            const allVisible = layers.filter(l => l.visible && l.paths && l.paths.length > 0);
+            const totalPaths = allVisible.reduce((s, l) => s + l.paths.length, 0);
+            if (totalPaths === 0) {
+                document.getElementById('timeEstLabel').textContent = '⏱ --';
+                return;
+            }
+            const selStart = Math.floor(layers.reduce((s,l)=>s+(l.paths||[]).reduce((a,p)=>a+p.length,0),0) * rangeStartPct / 100);
+            const selEnd   = Math.floor(layers.reduce((s,l)=>s+(l.paths||[]).reduce((a,p)=>a+p.length,0),0) * rangeEndPct / 100);
+            // Count paths in range roughly (use sliceLayersForRange path count)
+            const selPaths  = sliceLayersForRange(rangeStartPct, rangeEndPct).reduce((s,l)=>s+l.paths.length,0);
+            const totalMs = selPaths * (strokeMs + delayMs);
+            const secs = Math.round(totalMs / 1000);
+            const label = secs >= 60 ? `⏱ ~${Math.floor(secs/60)}m ${secs%60}s` : `⏱ ~${secs}s`;
+            document.getElementById('timeEstLabel').textContent = label;
+        }
 
         function setTool(tool) {
             currentTool = tool;
@@ -632,6 +891,7 @@ HTML_TEMPLATE = '''
             updateLayerList();
             updatePreview();
             updateReprocessButton();
+            updatePartsPanel();
         }
 
         function deleteLayer(index) {
@@ -648,12 +908,14 @@ HTML_TEMPLATE = '''
             updatePreview();
             updateDrawButton();
             updateReprocessButton();
+            updatePartsPanel();
         }
 
         function toggleLayerVisibility(index) {
             layers[index].visible = !layers[index].visible;
             updateLayerList();
             updatePreview();
+            updatePartsPanel();
         }
 
         function updateLayerList() {
@@ -680,9 +942,23 @@ HTML_TEMPLATE = '''
             saveCurrentLayerState();
             // Deep copy paths to avoid reference issues
             const pathsCopy = JSON.parse(JSON.stringify(paths || []));
+            
+            // Calculate original bounding box for consistent positioning in parts
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const path of pathsCopy) {
+                for (const [x, y] of path) {
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+            const bounds = (minX === Infinity) ? null : {minX, minY, maxX, maxY};
+
             layers.push({
                 name: name,
                 paths: pathsCopy,
+                originalBounds: bounds,
                 imageData: imageData,  // Store original image for reprocessing
                 offset: {x: 0, y: 0},
                 scaleX: 1.0,
@@ -697,6 +973,7 @@ HTML_TEMPLATE = '''
             updateLayerList();
             updateDrawButton();
             updateReprocessButton();
+            updatePartsPanel();
         }
 
         function updateReprocessButton() {
@@ -746,6 +1023,18 @@ HTML_TEMPLATE = '''
                 // Update current layer with new paths (keep transforms)
                 layer.paths = JSON.parse(JSON.stringify(data.paths));
                 processedPaths = JSON.parse(JSON.stringify(data.paths));
+
+                // Update original bounds
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const path of layer.paths) {
+                    for (const [x, y] of path) {
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                    }
+                }
+                layer.originalBounds = (minX === Infinity) ? null : {minX, minY, maxX, maxY};
 
                 document.getElementById('stats').style.display = 'grid';
                 document.getElementById('pathCount').textContent = data.path_count;
@@ -1264,6 +1553,7 @@ HTML_TEMPLATE = '''
                     }
                     return {
                         paths,
+                        original_bounds: l.originalBounds,
                         offset_x: l.offset.x / previewScale,
                         offset_y: l.offset.y / previewScale,
                         scale_x: l.scaleX,
@@ -1275,49 +1565,316 @@ HTML_TEMPLATE = '''
                 });
         }
 
-        // Slice layers' paths for a specific part (0-indexed)
-        function sliceLayersForPart(partIndex, numParts) {
+        // Slice visible layers within a percentage range of total points
+        function sliceLayersForRange(startPct, endPct) {
             const area = drawingArea;
             const previewScale = Math.min(
                 canvas.width / (area.right - area.left + 100),
                 canvas.height / (area.bottom - area.top + 100)
             ) * 0.9;
-            return layers
-                .filter(l => l.visible && l.paths && l.paths.length > 0)
-                .map(l => {
-                    const total = l.paths.length;
-                    const partSize = Math.ceil(total / numParts);
-                    const start = partIndex * partSize;
-                    const end = Math.min(start + partSize, total);
-                    return {
-                        paths: l.paths.slice(start, end),
-                        offset_x: l.offset.x / previewScale,
-                        offset_y: l.offset.y / previewScale,
-                        scale_x: l.scaleX,
-                        scale_y: l.scaleY,
-                        rotation: l.rotation,
-                        flip_h: l.flipH,
-                        flip_v: l.flipV
-                    };
-                });
+
+            const allVisibleLayers = layers.filter(l => l.visible && l.paths && l.paths.length > 0);
+            const totalPoints = allVisibleLayers.reduce((s, l) => s + l.paths.reduce((a, p) => a + p.length, 0), 0);
+            
+            const startIdx = Math.floor(totalPoints * startPct / 100);
+            const endIdx = (endPct >= 100) ? totalPoints : Math.floor(totalPoints * endPct / 100);
+            
+            let globalIdx = 0;
+            return allVisibleLayers.map(l => {
+                const layerPaths = [];
+                for (const path of l.paths) {
+                    const slicedPath = [];
+                    for (const pt of path) {
+                        // Point is included if index is in [startIdx, endIdx]
+                        // We use inclusive end to ensure the next segment starts where this one ends
+                        if (globalIdx >= startIdx && globalIdx <= endIdx) {
+                            slicedPath.push(pt);
+                        }
+                        globalIdx++;
+                    }
+                    if (slicedPath.length >= 2) {
+                        layerPaths.push(slicedPath);
+                    }
+                }
+                
+                return {
+                    paths: layerPaths,
+                    original_bounds: l.originalBounds,
+                    offset_x: l.offset.x / previewScale,
+                    offset_y: l.offset.y / previewScale,
+                    scale_x: l.scaleX,
+                    scale_y: l.scaleY,
+                    rotation: l.rotation,
+                    flip_h: l.flipH,
+                    flip_v: l.flipV
+                };
+            }).filter(l => l.paths.length > 0);
         }
 
-        // Show/hide parts panel based on point count
         function updatePartsPanel() {
-            const totalPoints = layers.reduce((s, l) => s + (l.paths||[]).reduce((a,p) => a + p.length, 0), 0);
-            document.getElementById('partsPanel').style.display = totalPoints > 500 ? 'block' : 'none';
-            onNumPartsChange();
+            const allVisibleLayers = layers.filter(l => l.visible && l.paths && l.paths.length > 0);
+            const totalPoints = allVisibleLayers.reduce((s, l) => s + l.paths.reduce((a, p) => a + p.length, 0), 0);
+            
+            document.getElementById('partsPanel').style.display = totalPoints > 0 ? 'block' : 'none';
+            if (totalPoints > 0) {
+                const startIdx = Math.floor(totalPoints * rangeStartPct / 100);
+                const endIdx = Math.floor(totalPoints * rangeEndPct / 100);
+                document.getElementById('rangePointsLabel').textContent = `Selection: ${endIdx - startIdx} pts / ${totalPoints}`;
+                updateRangeSliderUI();
+                updateSplitParts();
+                updateTimeEstimate();
+                if (isPointsEditorOpen) refreshPointsList();
+            }
         }
 
-        function onNumPartsChange() {
-            const n = parseInt(document.getElementById('numParts').value);
-            document.getElementById('numPartsVal').textContent = n;
-            const container = document.getElementById('partButtons');
-            if (n <= 1) { container.innerHTML = ''; return; }
-            container.innerHTML = Array.from({length: n}, (_, i) =>
-                `<button class="btn" onclick="startDrawingPart(${i}, ${n})" style="padding:4px 10px;">Part ${i+1}</button>`
-            ).join('');
+        function updateSplitParts() {
+            const container = document.getElementById('splitPartsContainer');
+            const count = parseInt(document.getElementById('splitPartsCount').value) || 1;
+            
+            container.innerHTML = Array.from({length: count}, (_, i) => {
+                const start = (i / count * 100).toFixed(0);
+                const end = ((i + 1) / count * 100).toFixed(0);
+                return `<button class="btn" style="padding:2px 8px; font-size:10px; background:#1a1a3a; border:1px solid #0f3460;" 
+                        onclick="playSplitPart(${i}, ${count})" title="${start}% - ${end}%">P${i+1}</button>`;
+            }).join('');
         }
+
+        function playSplitPart(index, total) {
+            rangeStartPct = (index / total) * 100;
+            rangeEndPct = ((index + 1) / total) * 100;
+            updatePartsPanel(); 
+            updateTimeEstimate();
+        }
+
+        function updateRangeSliderUI() {
+            document.getElementById('handleStart').style.left = rangeStartPct + '%';
+            document.getElementById('handleEnd').style.left = rangeEndPct + '%';
+            document.getElementById('rangeFill').style.left = rangeStartPct + '%';
+            document.getElementById('rangeFill').style.width = (rangeEndPct - rangeStartPct) + '%';
+            document.getElementById('rangeStartLabel').textContent = `Start: ${Math.round(rangeStartPct)}%`;
+            document.getElementById('rangeEndLabel').textContent = `End: ${Math.round(rangeEndPct)}%`;
+        }
+
+        function resetRange() {
+            rangeStartPct = 0;
+            rangeEndPct = 100;
+            updatePartsPanel();
+        }
+
+        async function startDrawingRange() {
+            saveCurrentLayerState();
+            const tryMode = document.getElementById('tryMode').checked;
+            
+            if (tryMode) {
+                log('Try Mode: drawing rough sketch of selection...');
+                const sketchLayers = sliceLayersForRange(rangeStartPct, rangeEndPct).map(l => ({
+                    ...l, 
+                    paths: l.paths.filter((_, i) => i % 3 === 0)
+                }));
+                await runDraw(sketchLayers, 'Sketch done. Now playing full selection...');
+                if (!isDrawing) return;
+            }
+            
+            log(`Playing Selection (${Math.round(rangeStartPct)}% - ${Math.round(rangeEndPct)}%)...`);
+            await runDraw(sliceLayersForRange(rangeStartPct, rangeEndPct), 'Selection complete!');
+        }
+
+        async function playNext() {
+            if (rangeStartPct >= 100) {
+                log('No more segments to play.');
+                return;
+            }
+            if (rangeEndPct >= 100) {
+                log('Finished all points.');
+                return;
+            }
+
+            const width = rangeEndPct - rangeStartPct;
+            rangeStartPct = rangeEndPct;
+            rangeEndPct = Math.min(100, rangeStartPct + width);
+            
+            updatePartsPanel();
+            updateTimeEstimate();
+            
+            log(`Advancing to Next Selection: ${Math.round(rangeStartPct)}% - ${Math.round(rangeEndPct)}%`);
+            await startDrawingRange();
+        }
+
+        // --- Points Editor Implementation ---
+        
+        let isPointsEditorOpen = false;
+
+        function togglePointsEditor() {
+            isPointsEditorOpen = !isPointsEditorOpen;
+            const editor = document.getElementById('pointsEditor');
+            const showBtn = document.getElementById('showEditorBtn');
+            editor.style.display = isPointsEditorOpen ? 'flex' : 'none';
+            showBtn.style.display = isPointsEditorOpen ? 'none' : 'inline-block';
+            if (isPointsEditorOpen) refreshPointsList();
+        }
+
+        function refreshPointsList() {
+            const allVisibleLayers = layers.filter(l => l.visible && l.paths && l.paths.length > 0);
+            const totalPoints = allVisibleLayers.reduce((s, l) => s + l.paths.reduce((a, p) => a + p.length, 0), 0);
+            const startIdx = Math.floor(totalPoints * rangeStartPct / 100);
+            const endIdx = Math.floor(totalPoints * rangeEndPct / 100);
+            
+            pointSelectionMapping = [];
+            let globalPtIdx = 0;
+            
+            // Generate mapping for current range
+            layers.forEach((l, lIdx) => {
+                if (!l.visible || !l.paths) return;
+                l.paths.forEach((p, pIdx) => {
+                    p.forEach((pt, ptIdx) => {
+                        if (globalPtIdx >= startIdx && globalPtIdx < endIdx) {
+                            pointSelectionMapping.push({lIdx, pIdx, ptIdx});
+                        }
+                        globalPtIdx++;
+                    });
+                });
+            });
+
+            const grid = document.getElementById('pointsGrid');
+            const editorStats = document.getElementById('editorStats');
+            
+            const selectedCount = pointSelectionMapping.length;
+            editorStats.textContent = `${selectedCount} points in selection.`;
+            
+            // Use a higher limit for performance safety, but much larger than 100
+            const displayLimit = 5000;
+            const toDisplay = pointSelectionMapping.slice(0, displayLimit);
+            
+            grid.innerHTML = toDisplay.map((m, i) => {
+                const pt = layers[m.lIdx].paths[m.pIdx][m.ptIdx];
+                return `
+                    <div class="pt-item" title="Layer: ${layers[m.lIdx].name}">
+                        <span class="idx">${i + 1}</span>
+                        <div class="coord">
+                            <span>X</span><input type="number" id="pt-x-${i}" value="${Math.round(pt[0])}">
+                            <span>Y</span><input type="number" id="pt-y-${i}" value="${Math.round(pt[1])}">
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            if (selectedCount > displayLimit) {
+                grid.innerHTML += `<div style="grid-column: 1/-1; text-align:center; padding:10px; color:#444;">Display limit reached (${displayLimit} points)</div>`;
+            }
+        }
+
+        function applyPointEdits() {
+            const displayLimit = 5000;
+            const toUpdate = pointSelectionMapping.slice(0, displayLimit);
+            
+            let changedCount = 0;
+            toUpdate.forEach((m, i) => {
+                const elX = document.getElementById(`pt-x-${i}`);
+                const elY = document.getElementById(`pt-y-${i}`);
+                if (!elX || !elY) return;
+
+                const newX = parseInt(elX.value);
+                const newY = parseInt(elY.value);
+                const pt = layers[m.lIdx].paths[m.pIdx][m.ptIdx];
+                
+                if (pt[0] !== newX || pt[1] !== newY) {
+                    layers[m.lIdx].paths[m.pIdx][m.ptIdx] = [newX, newY];
+                    changedCount++;
+                }
+            });
+            
+            if (changedCount > 0) {
+                log(`Applied edits to ${changedCount} points.`);
+                updatePreview();
+                refreshPointsList();
+            }
+        }
+
+        function bulkDeleteSelection() {
+            if (!confirm(`Delete all ${pointSelectionMapping.length} selected points?`)) return;
+            
+            // Sort mapping in reverse to avoid index shifting issues
+            // We group by layer/path to make it easier
+            const reverseMapping = [...pointSelectionMapping].sort((a,b) => {
+                if (a.lIdx !== b.lIdx) return b.lIdx - a.lIdx;
+                if (a.pIdx !== b.pIdx) return b.pIdx - a.pIdx;
+                return b.ptIdx - a.ptIdx;
+            });
+            
+            reverseMapping.forEach(m => {
+                layers[m.lIdx].paths[m.pIdx].splice(m.ptIdx, 1);
+            });
+            
+            log(`Deleted ${reverseMapping.length} points.`);
+            updatePreview();
+            refreshPointsList();
+            updatePartsPanel();
+            
+            if (pointSelectionMapping.length === 0) togglePointsEditor();
+        }
+
+        function bulkThinSelection() {
+            // Remove every 2nd point in the selection
+            const toDelete = pointSelectionMapping.filter((_, i) => i % 2 === 1);
+            
+            const reverseMapping = [...toDelete].sort((a,b) => {
+                if (a.lIdx !== b.lIdx) return b.lIdx - a.lIdx;
+                if (a.pIdx !== b.pIdx) return b.pIdx - a.pIdx;
+                return b.ptIdx - a.ptIdx;
+            });
+            
+            reverseMapping.forEach(m => {
+                layers[m.lIdx].paths[m.pIdx].splice(m.ptIdx, 1);
+            });
+            
+            log(`Thinned selection: removed ${reverseMapping.length} points.`);
+            updatePreview();
+            refreshPointsList();
+            updatePartsPanel();
+        }
+
+        // Initialize range slider dragging
+        const rangeContainer = document.getElementById('rangeContainer');
+        const handleStart = document.getElementById('handleStart');
+        const handleEnd = document.getElementById('handleEnd');
+
+        const onHandleDown = (e, handle) => {
+            e.preventDefault();
+            activeHandle = handle;
+            document.addEventListener('mousemove', onHandleMove);
+            document.addEventListener('mouseup', onHandleUp);
+            document.addEventListener('touchmove', onHandleMove, {passive: false});
+            document.addEventListener('touchend', onHandleUp);
+        };
+
+        const onHandleMove = (e) => {
+            if (!activeHandle) return;
+            e.preventDefault();
+            const rect = rangeContainer.getBoundingClientRect();
+            const touch = e.touches ? e.touches[0] : e;
+            let pct = (touch.clientX - rect.left) / rect.width * 100;
+            pct = Math.max(0, Math.min(100, pct));
+
+            if (activeHandle === 'start') {
+                rangeStartPct = Math.min(pct, rangeEndPct - 1);
+            } else {
+                rangeEndPct = Math.max(pct, rangeStartPct + 1);
+            }
+            updatePartsPanel();
+        };
+
+        const onHandleUp = () => {
+            activeHandle = null;
+            document.removeEventListener('mousemove', onHandleMove);
+            document.removeEventListener('mouseup', onHandleUp);
+            document.removeEventListener('touchmove', onHandleMove);
+            document.removeEventListener('touchend', onHandleUp);
+        };
+
+        handleStart.addEventListener('mousedown', (e) => onHandleDown(e, 'start'));
+        handleEnd.addEventListener('mousedown', (e) => onHandleDown(e, 'end'));
+        handleStart.addEventListener('touchstart', (e) => onHandleDown(e, 'start'), {passive: false});
+        handleEnd.addEventListener('touchstart', (e) => onHandleDown(e, 'end'), {passive: false});
 
         let isPaused = false;
 
@@ -1342,42 +1899,9 @@ HTML_TEMPLATE = '''
             }
         }
 
-        async function startDrawingAll() {
-            const tryMode = document.getElementById('tryMode').checked;
-            const numParts = parseInt(document.getElementById('numParts').value);
-            saveCurrentLayerState();
 
-            if (tryMode) {
-                log('Try Mode: drawing rough sketch first...');
-                const sketchLayers = collectLayerPaths(true);
-                await runDraw(sketchLayers, 'Try sketch done. Now starting full drawing...');
-                if (!isDrawing) return; // stopped by user
-            }
 
-            if (numParts <= 1) {
-                await runDraw(collectLayerPaths(false), 'Complete!');
-            } else {
-                for (let i = 0; i < numParts; i++) {
-                    if (!isDrawing) return;
-                    // Part 1 also does a sketch if not already done via tryMode
-                    if (i === 0 && !tryMode) {
-                        log(`Part 1/${numParts}: drawing sketch first...`);
-                        const sketchPart = sliceLayersForPart(0, numParts).map(l =>
-                            ({...l, paths: l.paths.filter((_, j) => j % 3 === 0)}));
-                        await runDraw(sketchPart, `Part 1 sketch done. Completing Part 1...`);
-                        if (!isDrawing) return;
-                    }
-                    log(`Drawing Part ${i+1}/${numParts}...`);
-                    await runDraw(sliceLayersForPart(i, numParts), `Part ${i+1}/${numParts} complete.`);
-                }
-            }
-        }
 
-        async function startDrawingPart(partIndex, numParts) {
-            saveCurrentLayerState();
-            log(`Drawing Part ${partIndex+1}/${numParts}...`);
-            await runDraw(sliceLayersForPart(partIndex, numParts), `Part ${partIndex+1}/${numParts} complete.`);
-        }
 
         async function runDraw(layersToSend, doneMsg) {
             isDrawing = true;
@@ -1409,6 +1933,12 @@ HTML_TEMPLATE = '''
                 const decoder = new TextDecoder();
 
                 while (true) {
+                    if (!isDrawing) {
+                        log('Cancelling draw stream...');
+                        await reader.cancel();
+                        break;
+                    }
+
                     const {value, done} = await reader.read();
                     if (done) break;
                     const text = decoder.decode(value);
@@ -1417,15 +1947,37 @@ HTML_TEMPLATE = '''
                         const data = JSON.parse(line.slice(5));
                         if (data.progress !== undefined) {
                             document.getElementById('progressBar').style.width = data.progress + '%';
+                            // Karaoke highlight in points editor
+                            if (isPointsEditorOpen && pointSelectionMapping.length > 0) {
+                                const activePtIdx = Math.floor(data.progress / 100 * pointSelectionMapping.length);
+                                document.querySelectorAll('.pt-item').forEach((el, i) => {
+                                    el.style.background = i === activePtIdx
+                                        ? 'rgba(0,212,255,0.25)'
+                                        : (i < activePtIdx ? 'rgba(0,212,255,0.06)' : 'rgba(255,255,255,0.03)');
+                                });
+                            }
                         }
                         if (data.message) log(data.message);
                         if (data.done) {
                             document.getElementById('drawStatus').textContent = doneMsg;
                             document.getElementById('drawStatus').className = 'status success';
+                            // Clear karaoke
+                            document.querySelectorAll('.pt-item').forEach(el => el.style.background = '');
+                            
+                            // Check for auto-play (using an async flow)
+                            if (document.getElementById('autoPlay').checked && isDrawing) {
+                                (async () => {
+                                    await sleep(500); 
+                                    if (document.getElementById('autoPlay').checked && isDrawing) {
+                                        playNext();
+                                    }
+                                })();
+                            }
                         }
                         if (data.error) {
                             document.getElementById('drawStatus').textContent = 'Error: ' + data.error;
                             document.getElementById('drawStatus').className = 'status error';
+                            document.querySelectorAll('.pt-item').forEach(el => el.style.background = '');
                         }
                     }
                 }
@@ -1433,16 +1985,16 @@ HTML_TEMPLATE = '''
                 log('Error: ' + err.message);
                 document.getElementById('drawStatus').textContent = 'Error: ' + err.message;
                 document.getElementById('drawStatus').className = 'status error';
+            } finally {
+                isDrawing = false;
+                document.getElementById('drawBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('pauseBtn').disabled = true;
             }
-
-            isDrawing = false;
-            document.getElementById('drawBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
-            document.getElementById('pauseBtn').disabled = true;
         }
 
         // Legacy alias for any remaining calls
-        function startDrawing() { startDrawingAll(); }
+        function startDrawing() { startDrawingRange(); }
 
         async function stopDrawing() {
             await fetch('/stop', {method: 'POST'});
@@ -1703,11 +2255,19 @@ def draw():
                 if not paths:
                     continue
 
-                # Calculate path bounds for this layer
-                min_x = min(p[0] for path in paths for p in path)
-                min_y = min(p[1] for path in paths for p in path)
-                max_x = max(p[0] for path in paths for p in path)
-                max_y = max(p[1] for path in paths for p in path)
+                # Use original bounds if provided (important for "Parts" feature)
+                orig_bounds = layer.get('original_bounds')
+                if orig_bounds:
+                    min_x = orig_bounds['minX']
+                    min_y = orig_bounds['minY']
+                    max_x = orig_bounds['maxX']
+                    max_y = orig_bounds['maxY']
+                else:
+                    # Calculate path bounds for this layer (fallback)
+                    min_x = min(p[0] for path in paths for p in path)
+                    min_y = min(p[1] for path in paths for p in path)
+                    max_x = max(p[0] for path in paths for p in path)
+                    max_y = max(p[1] for path in paths for p in path)
                 path_w = max_x - min_x or 1
                 path_h = max_y - min_y or 1
                 path_center_x = min_x + path_w / 2
@@ -1752,18 +2312,22 @@ def draw():
             yield f"data:{json.dumps({'message': f'Drawing {total_paths} paths ({total_points} points)...'})}\n\n"
 
             for i, path in enumerate(scaled_paths):
-                if not STATE.get('drawing', True):
-                    yield f"data:{json.dumps({'message': 'Stopped', 'done': True})}\n\n"
-                    return
-
-                # Pause support: block until resumed
-                if STATE.get('paused', False):
-                    yield f"data:{json.dumps({'message': 'Paused...'})}\n\n"
-                    STATE['resume_event'].wait()
-                    STATE['resume_event'].clear()
-                    yield f"data:{json.dumps({'message': 'Resumed.'})}\n\n"
-
                 for j in range(len(path) - 1):
+                    # Pause support: poll state until resumed
+                    if STATE.get('paused', False):
+                        yield f"data:{json.dumps({'message': 'Paused...'})}\n\n"
+                        while STATE.get('paused', False):
+                            # Check for stop while paused
+                            if not STATE.get('drawing', True):
+                                yield f"data:{json.dumps({'message': 'Stopped', 'done': True})}\n\n"
+                                return
+                            time.sleep(0.1)
+                        yield f"data:{json.dumps({'message': 'Resumed.'})}\n\n"
+
+                    if not STATE.get('drawing', True):
+                        yield f"data:{json.dumps({'message': 'Stopped', 'done': True})}\n\n"
+                        return
+                    
                     x1, y1 = path[j]
                     x2, y2 = path[j + 1]
                     subprocess.run(
@@ -1791,7 +2355,6 @@ def stop():
     """Stop drawing."""
     STATE['drawing'] = False
     STATE['paused'] = False
-    STATE['resume_event'].set()  # Unblock if paused
     return jsonify({'status': 'stopped'})
 
 
@@ -1807,7 +2370,6 @@ def pause():
 def resume():
     """Resume a paused drawing."""
     STATE['paused'] = False
-    STATE['resume_event'].set()
     return jsonify({'status': 'resumed'})
 
 
