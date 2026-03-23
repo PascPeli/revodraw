@@ -2362,7 +2362,6 @@ def stop():
 def pause():
     """Pause drawing after current stroke."""
     STATE['paused'] = True
-    STATE['resume_event'].clear()
     return jsonify({'status': 'paused'})
 
 
