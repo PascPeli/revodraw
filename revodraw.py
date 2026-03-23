@@ -803,8 +803,6 @@ HTML_TEMPLATE = '''
                 document.getElementById('timeEstLabel').textContent = '⏱ --';
                 return;
             }
-            const selStart = Math.floor(layers.reduce((s,l)=>s+(l.paths||[]).reduce((a,p)=>a+p.length,0),0) * rangeStartPct / 100);
-            const selEnd   = Math.floor(layers.reduce((s,l)=>s+(l.paths||[]).reduce((a,p)=>a+p.length,0),0) * rangeEndPct / 100);
             // Count paths in range roughly (use sliceLayersForRange path count)
             const selPaths  = sliceLayersForRange(rangeStartPct, rangeEndPct).reduce((s,l)=>s+l.paths.length,0);
             const totalMs = selPaths * (strokeMs + delayMs);
