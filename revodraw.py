@@ -2035,7 +2035,13 @@ def process_image():
         threshold = int(request.form.get('threshold', 127))
         simplify = float(request.form.get('simplify', 2.0))
         fill = request.form.get('fill', '0') == '1'
-        spacing = int(request.form.get('spacing', 4))
+        spacing_raw = request.form.get('spacing', '4')
+        try:
+            spacing = int(spacing_raw)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid spacing value; it must be a positive integer.'}), 400
+        if spacing < 1:
+            return jsonify({'error': 'Invalid spacing value; it must be at least 1.'}), 400
 
         # Get uploaded file
         if 'image' not in request.files:
