@@ -358,7 +358,7 @@ Examples:
                        help="Preview only, don't draw")
     parser.add_argument("--full-area", "-f", action="store_true",
                        help="Use full L-shaped area (content in VISA zone will be clipped)")
-    parser.add_argument("--serial", "-s", help="ADB device serial number")
+    parser.add_argument("--serial", "-S", help="ADB device serial number")
     parser.add_argument("--debug", "-d", action="store_true",
                        help="Save debug images")
 
